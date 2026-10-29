@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   Database, 
   Sparkles, 
@@ -18,27 +18,101 @@ import {
   Settings, 
   History, 
   RefreshCw,
-  ExternalLink,
-  Code2,
-  FileQuestion,
-  Info,
-  Clock,
-  CheckCircle2
+  Code2, 
+  FileQuestion, 
+  Info, 
+  Clock, 
+  CheckCircle2,
+  Sun,
+  Moon,
+  Search,
+  Plus,
+  X,
+  ArrowUpDown,
+  Filter,
+  Zap,
+  Trash2
 } from 'lucide-react';
 import './App.css';
 
-export default function App() {
-  // Application State
-  const [activeMode, setActiveMode] = useState('generate'); // 'generate' | 'explain' | 'playground'
-  const [prompt, setPrompt] = useState('Show monthly sales by category');
-  const [sql, setSql] = useState('');
-  const [formattedSql, setFormattedSql] = useState('');
-  const [explanation, setExplanation] = useState(null);
-  const [validation, setValidation] = useState(null);
-  const [queryResults, setQueryResults] = useState(null);
-  const [activeView, setActiveView] = useState('table'); // 'table' | 'chart'
+const DEFAULT_SAMPLE_PROMPT = 'Show monthly sales by category';
 
-  // Loading & Execution states
+export default function App() {
+  // Theme State (Dark / Light)
+  const [theme, setTheme] = useState(() => localStorage.getItem('querycraft_theme') || 'dark');
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('querycraft_theme', theme);
+  }, [theme]);
+
+  const toggleTheme = () => {
+    setTheme(prev => (prev === 'dark' ? 'light' : 'dark'));
+  };
+
+  // Multi-Tab Query Sessions
+  const [tabs, setTabs] = useState([
+    {
+      id: 'tab-1',
+      title: 'Query 1: Monthly Sales',
+      prompt: DEFAULT_SAMPLE_PROMPT,
+      sql: '',
+      formattedSql: '',
+      explanation: null,
+      validation: null,
+      queryResults: null,
+      activeMode: 'generate', // 'generate' | 'explain' | 'playground'
+      activeView: 'table', // 'table' | 'chart'
+      resultsFilter: '',
+      sortColumn: null,
+      sortDirection: 'asc' // 'asc' | 'desc'
+    }
+  ]);
+  const [activeTabId, setActiveTabId] = useState('tab-1');
+
+  // Active Tab Pointer
+  const activeTab = useMemo(() => {
+    return tabs.find(t => t.id === activeTabId) || tabs[0];
+  }, [tabs, activeTabId]);
+
+  // Tab State Updater Helper
+  const updateActiveTab = (updates) => {
+    setTabs(prev => prev.map(t => (t.id === activeTabId ? { ...t, ...updates } : t)));
+  };
+
+  // Add / Close Tabs
+  const handleAddNewTab = () => {
+    const newId = `tab-${Date.now()}`;
+    const newTab = {
+      id: newId,
+      title: `Query ${tabs.length + 1}`,
+      prompt: '',
+      sql: '',
+      formattedSql: '',
+      explanation: null,
+      validation: null,
+      queryResults: null,
+      activeMode: 'generate',
+      activeView: 'table',
+      resultsFilter: '',
+      sortColumn: null,
+      sortDirection: 'asc'
+    };
+    setTabs(prev => [...prev, newTab]);
+    setActiveTabId(newId);
+  };
+
+  const handleCloseTab = (e, tabIdToClose) => {
+    e.stopPropagation();
+    if (tabs.length <= 1) return;
+    const nextTabs = tabs.filter(t => t.id !== tabIdToClose);
+    setTabs(nextTabs);
+    if (activeTabId === tabIdToClose) {
+      setActiveTabId(nextTabs[nextTabs.length - 1].id);
+    }
+  };
+
+  // Loading & Transient States
   const [isGenerating, setIsGenerating] = useState(false);
   const [isExecuting, setIsExecuting] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -46,6 +120,7 @@ export default function App() {
 
   // Schema & Sample Queries
   const [schema, setSchema] = useState(null);
+  const [schemaSearch, setSchemaSearch] = useState('');
   const [expandedTables, setExpandedTables] = useState({ categories: true, products: true, orders: true });
   const [sampleQueries, setSampleQueries] = useState([]);
   const [selectedTableForPreview, setSelectedTableForPreview] = useState(null);
@@ -62,7 +137,7 @@ export default function App() {
     }
   });
 
-  // Fetch schema and sample queries on mount
+  // Fetch initial schema and sample queries
   useEffect(() => {
     fetchSchema();
     fetchSampleQueries();
@@ -92,12 +167,23 @@ export default function App() {
     }
   };
 
+  // Filtered Schema tables according to search query
+  const filteredTables = useMemo(() => {
+    if (!schema?.tables) return [];
+    if (!schemaSearch.trim()) return schema.tables;
+    const q = schemaSearch.toLowerCase();
+    return schema.tables.filter(table => {
+      const tableNameMatch = table.name.toLowerCase().includes(q);
+      const colMatch = table.columns?.some(c => c.name.toLowerCase().includes(q) || c.type.toLowerCase().includes(q));
+      return tableNameMatch || colMatch;
+    });
+  }, [schema, schemaSearch]);
+
   // Generate SQL from Natural Language
-  const handleGenerate = async (queryPrompt = prompt) => {
+  const handleGenerate = async (queryPrompt = activeTab.prompt) => {
     if (!queryPrompt.trim()) return;
     setIsGenerating(true);
     setErrorMessage('');
-    setQueryResults(null);
 
     try {
       const res = await fetch('/api/generate', {
@@ -113,15 +199,19 @@ export default function App() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || 'Failed to generate query');
 
-      setSql(data.sql);
-      setFormattedSql(data.formatted_sql);
-      setValidation(data.validation);
-      setExplanation({
-        summary: data.summary,
-        clauses_breakdown: data.clauses_breakdown,
-        business_value: data.business_value,
-        suggested_questions: data.suggested_questions,
-        engine: data.engine
+      updateActiveTab({
+        prompt: queryPrompt,
+        title: queryPrompt.length > 20 ? queryPrompt.substring(0, 18) + '...' : queryPrompt,
+        sql: data.sql,
+        formattedSql: data.formatted_sql,
+        validation: data.validation,
+        explanation: {
+          summary: data.summary,
+          clauses_breakdown: data.clauses_breakdown,
+          business_value: data.business_value,
+          suggested_questions: data.suggested_questions,
+          engine: data.engine
+        }
       });
 
       // Save to history
@@ -135,7 +225,7 @@ export default function App() {
       setQueryHistory(updatedHistory);
       localStorage.setItem('querycraft_history', JSON.stringify(updatedHistory));
 
-      // Auto-execute query safely to show results immediately!
+      // Auto-execute query safely to show immediate results
       if (data.validation?.is_safe) {
         handleExecute(data.sql);
       }
@@ -148,7 +238,7 @@ export default function App() {
 
   // Explain arbitrary SQL
   const handleExplain = async () => {
-    if (!sql.trim()) return;
+    if (!activeTab.sql.trim()) return;
     setIsGenerating(true);
     setErrorMessage('');
 
@@ -157,7 +247,7 @@ export default function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          sql: sql,
+          sql: activeTab.sql,
           api_key: apiKey.trim() || undefined
         })
       });
@@ -165,8 +255,10 @@ export default function App() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || 'Failed to explain query');
 
-      setValidation(data.validation);
-      setExplanation(data.explanation);
+      updateActiveTab({
+        validation: data.validation,
+        explanation: data.explanation
+      });
     } catch (err) {
       setErrorMessage(err.message);
     } finally {
@@ -175,7 +267,7 @@ export default function App() {
   };
 
   // Execute SQL in read-only mode
-  const handleExecute = async (queryToRun = sql) => {
+  const handleExecute = async (queryToRun = activeTab.sql) => {
     if (!queryToRun.trim()) return;
     setIsExecuting(true);
     setErrorMessage('');
@@ -190,10 +282,14 @@ export default function App() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || 'Query execution failed');
 
-      setQueryResults(data.data);
+      updateActiveTab({
+        queryResults: data.data,
+        resultsFilter: '',
+        sortColumn: null
+      });
     } catch (err) {
       setErrorMessage(err.message);
-      setQueryResults(null);
+      updateActiveTab({ queryResults: null });
     } finally {
       setIsExecuting(false);
     }
@@ -201,17 +297,19 @@ export default function App() {
 
   // Format SQL
   const handleFormat = async () => {
-    if (!sql.trim()) return;
+    if (!activeTab.sql.trim()) return;
     try {
       const res = await fetch('/api/validate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sql })
+        body: JSON.stringify({ sql: activeTab.sql })
       });
       const data = await res.json();
       if (data.formatted_sql) {
-        setSql(data.formatted_sql);
-        setValidation(data);
+        updateActiveTab({
+          sql: data.formatted_sql,
+          validation: data
+        });
       }
     } catch (err) {
       console.error(err);
@@ -220,21 +318,33 @@ export default function App() {
 
   // Copy SQL to clipboard
   const handleCopySql = () => {
-    navigator.clipboard.writeText(sql);
+    navigator.clipboard.writeText(activeTab.sql);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
+  // Clear current tab SQL
+  const handleClearSql = () => {
+    updateActiveTab({
+      sql: '',
+      formattedSql: '',
+      queryResults: null,
+      explanation: null,
+      validation: null
+    });
+  };
+
   // Export results as CSV
   const handleExportCsv = () => {
-    if (!queryResults || !queryResults.columns || !queryResults.rows) return;
-    const header = queryResults.columns.join(',');
-    const rows = queryResults.rows.map(r => r.map(val => `"${val !== null ? val : ''}"`).join(','));
+    const qr = activeTab.queryResults;
+    if (!qr || !qr.columns || !qr.rows) return;
+    const header = qr.columns.join(',');
+    const rows = qr.rows.map(r => r.map(val => `"${val !== null ? val : ''}"`).join(','));
     const csvContent = "data:text/csv;charset=utf-8," + [header, ...rows].join('\n');
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `query_results_${Date.now()}.csv`);
+    link.setAttribute("download", `querycraft_results_${Date.now()}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -242,10 +352,11 @@ export default function App() {
 
   // Export results as JSON
   const handleExportJson = () => {
-    if (!queryResults || !queryResults.columns || !queryResults.rows) return;
-    const jsonList = queryResults.rows.map(row => {
+    const qr = activeTab.queryResults;
+    if (!qr || !qr.columns || !qr.rows) return;
+    const jsonList = qr.rows.map(row => {
       const obj = {};
-      queryResults.columns.forEach((col, idx) => {
+      qr.columns.forEach((col, idx) => {
         obj[col] = row[idx];
       });
       return obj;
@@ -254,7 +365,7 @@ export default function App() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.setAttribute("href", url);
-    link.setAttribute("download", `query_results_${Date.now()}.json`);
+    link.setAttribute("download", `querycraft_results_${Date.now()}.json`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -276,37 +387,96 @@ export default function App() {
 
   // Automatically trigger sample query "Show monthly sales by category" on first load
   useEffect(() => {
-    if (!sql && schema) {
-      handleGenerate("Show monthly sales by category");
+    if (!activeTab.sql && schema) {
+      handleGenerate(DEFAULT_SAMPLE_PROMPT);
     }
   }, [schema]);
 
-  // Determine if result data is chartable (has a label column and at least one numeric metric column)
-  const chartData = React.useMemo(() => {
-    if (!queryResults || !queryResults.rows || queryResults.rows.length === 0) return null;
-    const cols = queryResults.columns;
+  // Calculate line numbers for editor
+  const sqlLines = useMemo(() => {
+    const count = Math.max((activeTab.sql || '').split('\n').length, 5);
+    return Array.from({ length: count }, (_, i) => i + 1);
+  }, [activeTab.sql]);
+
+  // Process & Sort Tabular Query Results
+  const processedTableData = useMemo(() => {
+    const qr = activeTab.queryResults;
+    if (!qr || !qr.rows) return { columns: [], rows: [] };
+
+    let rows = [...qr.rows];
+    // Filter
+    if (activeTab.resultsFilter.trim()) {
+      const term = activeTab.resultsFilter.toLowerCase();
+      rows = rows.filter(row => row.some(cell => String(cell ?? '').toLowerCase().includes(term)));
+    }
+
+    // Sort
+    if (activeTab.sortColumn !== null) {
+      const colIdx = qr.columns.indexOf(activeTab.sortColumn);
+      if (colIdx !== -1) {
+        rows.sort((a, b) => {
+          const valA = a[colIdx];
+          const valB = b[colIdx];
+          if (valA === valB) return 0;
+          if (valA === null) return 1;
+          if (valB === null) return -1;
+          if (typeof valA === 'number' && typeof valB === 'number') {
+            return activeTab.sortDirection === 'asc' ? valA - valB : valB - valA;
+          }
+          return activeTab.sortDirection === 'asc' 
+            ? String(valA).localeCompare(String(valB)) 
+            : String(valB).localeCompare(String(valA));
+        });
+      }
+    }
+
+    return { columns: qr.columns, rows };
+  }, [activeTab.queryResults, activeTab.resultsFilter, activeTab.sortColumn, activeTab.sortDirection]);
+
+  // Determine if result data is chartable (has a label column and numeric metric column)
+  const chartData = useMemo(() => {
+    const qr = activeTab.queryResults;
+    if (!qr || !qr.rows || qr.rows.length === 0) return null;
+    const cols = qr.columns;
     if (cols.length < 2) return null;
 
     // Find numeric columns
-    const firstRow = queryResults.rows[0];
+    const firstRow = qr.rows[0];
     const numericColIndex = firstRow.findIndex(val => typeof val === 'number');
     if (numericColIndex === -1) return null;
 
     // Label column is usually col 0 or 1
     const labelColIndex = numericColIndex === 0 ? 1 : 0;
-    const maxValue = Math.max(...queryResults.rows.map(r => Number(r[numericColIndex]) || 0));
+    const values = qr.rows.map(r => Number(r[numericColIndex]) || 0);
+    const maxValue = Math.max(...values);
+    const sumValue = values.reduce((acc, v) => acc + v, 0);
 
     return {
       labelCol: cols[labelColIndex],
       valueCol: cols[numericColIndex],
-      items: queryResults.rows.map(r => ({
+      totalSum: sumValue,
+      items: qr.rows.map(r => ({
         label: String(r[labelColIndex] ?? 'N/A'),
         value: Number(r[numericColIndex]) || 0,
         subLabel: cols.length > 2 ? String(r[2] ?? '') : ''
       })),
       max: maxValue > 0 ? maxValue : 1
     };
-  }, [queryResults]);
+  }, [activeTab.queryResults]);
+
+  // Column header click to toggle sorting
+  const handleSortClick = (col) => {
+    if (activeTab.sortColumn === col) {
+      updateActiveTab({
+        sortDirection: activeTab.sortDirection === 'asc' ? 'desc' : 'asc'
+      });
+    } else {
+      updateActiveTab({
+        sortColumn: col,
+        sortDirection: 'asc'
+      });
+    }
+  };
 
   return (
     <div className="app-container">
@@ -330,6 +500,15 @@ export default function App() {
             <span>SQLite Active ({schema?.tables?.length || 6} Tables)</span>
           </div>
 
+          {/* Theme Toggle Button */}
+          <button 
+            className="btn-theme-toggle" 
+            onClick={toggleTheme} 
+            title={`Switch to ${theme === 'dark' ? 'Light' : 'Dark'} mode`}
+          >
+            {theme === 'dark' ? <Sun size={17} /> : <Moon size={17} />}
+          </button>
+
           <button 
             className="btn-header"
             onClick={() => setShowSettings(true)}
@@ -343,26 +522,38 @@ export default function App() {
 
       {/* Main Grid Workspace */}
       <div className="main-workspace">
-        {/* Left Sidebar: Schema Explorer */}
+        {/* Left Sidebar: Schema Explorer & Recent Inquiries */}
         <aside className="schema-sidebar">
           <div className="glass-panel sidebar-card">
             <div className="sidebar-title">
-              <span style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+              <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <Layers size={16} color="var(--primary-light)" />
                 Database Schema
               </span>
               <button 
                 onClick={fetchSchema} 
-                style={{ background: 'none', color: 'var(--text-subtle)' }}
+                style={{ background: 'none', color: 'var(--text-subtle)', padding: '2px' }}
                 title="Refresh Schema"
               >
                 <RefreshCw size={14} />
               </button>
             </div>
 
+            {/* Quick Schema Search Input */}
+            <div className="schema-search-wrapper">
+              <Search size={13} className="schema-search-icon" />
+              <input 
+                type="text"
+                className="schema-search-input"
+                placeholder="Search tables or columns..."
+                value={schemaSearch}
+                onChange={(e) => setSchemaSearch(e.target.value)}
+              />
+            </div>
+
             <div className="table-list">
-              {schema?.tables ? (
-                schema.tables.map(table => {
+              {filteredTables.length > 0 ? (
+                filteredTables.map(table => {
                   const isExpanded = !!expandedTables[table.name];
                   return (
                     <div key={table.name} className="table-item">
@@ -403,7 +594,9 @@ export default function App() {
                   );
                 })
               ) : (
-                <div style={{ color: 'var(--text-subtle)', fontSize: '0.85rem' }}>Loading schema...</div>
+                <div style={{ color: 'var(--text-subtle)', fontSize: '0.85rem', padding: '0.5rem 0' }}>
+                  {schema ? 'No matching tables found.' : 'Loading schema...'}
+                </div>
               )}
             </div>
           </div>
@@ -416,17 +609,27 @@ export default function App() {
                   <History size={16} color="var(--primary-light)" />
                   Recent Inquiries
                 </span>
+                <button
+                  onClick={() => {
+                    setQueryHistory([]);
+                    localStorage.removeItem('querycraft_history');
+                  }}
+                  style={{ background: 'none', color: 'var(--text-subtle)', fontSize: '0.72rem' }}
+                  title="Clear history"
+                >
+                  Clear
+                </button>
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', maxHeight: '200px', overflowY: 'auto' }}>
                 {queryHistory.map(item => (
                   <button
                     key={item.id}
                     onClick={() => {
-                      setPrompt(item.prompt);
+                      updateActiveTab({ prompt: item.prompt });
                       handleGenerate(item.prompt);
                     }}
                     style={{
-                      background: 'rgba(255,255,255,0.03)',
+                      background: 'var(--bg-subtle)',
                       border: '1px solid var(--border-subtle)',
                       borderRadius: 'var(--radius-sm)',
                       padding: '0.5rem 0.65rem',
@@ -438,7 +641,7 @@ export default function App() {
                       gap: '0.2rem'
                     }}
                   >
-                    <span style={{ color: '#e2e8f0', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <span style={{ color: 'var(--text-main)', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {item.prompt}
                     </span>
                     <span style={{ fontSize: '0.7rem', color: 'var(--text-subtle)' }}>{item.timestamp}</span>
@@ -449,43 +652,75 @@ export default function App() {
           )}
         </aside>
 
-        {/* Center Main Workspace */}
+        {/* Center Workspace */}
         <main className="center-content">
+          {/* Query Session Tabs Bar */}
+          <div className="tabs-bar">
+            {tabs.map(tab => (
+              <div 
+                key={tab.id}
+                className={`query-tab-item ${tab.id === activeTabId ? 'active' : ''}`}
+                onClick={() => setActiveTabId(tab.id)}
+              >
+                <Code2 size={13} />
+                <span>{tab.title}</span>
+                {tabs.length > 1 && (
+                  <button 
+                    className="tab-close-btn" 
+                    onClick={(e) => handleCloseTab(e, tab.id)}
+                    title="Close tab"
+                  >
+                    <X size={12} />
+                  </button>
+                )}
+              </div>
+            ))}
+
+            <button 
+              className="btn-new-tab"
+              onClick={handleAddNewTab}
+              title="Open New Query Tab"
+            >
+              <Plus size={13} />
+              <span>New Tab</span>
+            </button>
+          </div>
+
           {/* Mode Tabs & Prompt Input */}
           <div className="glass-panel prompt-card">
             <div className="mode-pills">
               <button 
-                className={`mode-pill ${activeMode === 'generate' ? 'active' : ''}`}
-                onClick={() => setActiveMode('generate')}
+                className={`mode-pill ${activeTab.activeMode === 'generate' ? 'active' : ''}`}
+                onClick={() => updateActiveTab({ activeMode: 'generate' })}
               >
-                <Sparkles size={13} style={{ display: 'inline', marginRight: '4px' }} />
+                <Sparkles size={13} />
                 Natural Language to SQL
               </button>
               <button 
-                className={`mode-pill ${activeMode === 'explain' ? 'active' : ''}`}
-                onClick={() => setActiveMode('explain')}
+                className={`mode-pill ${activeTab.activeMode === 'explain' ? 'active' : ''}`}
+                onClick={() => updateActiveTab({ activeMode: 'explain' })}
               >
-                <FileQuestion size={13} style={{ display: 'inline', marginRight: '4px' }} />
+                <FileQuestion size={13} />
                 Explain SQL
               </button>
               <button 
-                className={`mode-pill ${activeMode === 'playground' ? 'active' : ''}`}
-                onClick={() => setActiveMode('playground')}
+                className={`mode-pill ${activeTab.activeMode === 'playground' ? 'active' : ''}`}
+                onClick={() => updateActiveTab({ activeMode: 'playground' })}
               >
-                <Code2 size={13} style={{ display: 'inline', marginRight: '4px' }} />
+                <Code2 size={13} />
                 Safe SQL Playground
               </button>
             </div>
 
             {/* Prompt input for 'generate' mode */}
-            {activeMode === 'generate' && (
+            {activeTab.activeMode === 'generate' && (
               <>
                 <div className="prompt-textarea-wrapper">
                   <textarea
                     className="prompt-textarea"
                     placeholder="Ask questions such as 'Show monthly sales by category', 'Top 5 products by revenue', or 'VIP customers by spend'..."
-                    value={prompt}
-                    onChange={(e) => setPrompt(e.target.value)}
+                    value={activeTab.prompt}
+                    onChange={(e) => updateActiveTab({ prompt: e.target.value })}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' && !e.shiftKey) {
                         e.preventDefault();
@@ -498,17 +733,17 @@ export default function App() {
                     <button 
                       className="btn-generate"
                       onClick={() => handleGenerate()}
-                      disabled={isGenerating || !prompt.trim()}
+                      disabled={isGenerating || !activeTab.prompt.trim()}
                       id="generate-sql-button"
                     >
                       {isGenerating ? (
                         <>
-                          <RefreshCw size={16} className="animate-spin" />
+                          <RefreshCw size={15} className="animate-spin" />
                           <span>Generating...</span>
                         </>
                       ) : (
                         <>
-                          <Sparkles size={16} />
+                          <Sparkles size={15} />
                           <span>Generate SQL & Explain</span>
                         </>
                       )}
@@ -524,7 +759,7 @@ export default function App() {
                       key={sample.id}
                       className="sample-chip"
                       onClick={() => {
-                        setPrompt(sample.prompt);
+                        updateActiveTab({ prompt: sample.prompt });
                         handleGenerate(sample.prompt);
                       }}
                     >
@@ -536,27 +771,27 @@ export default function App() {
             )}
 
             {/* Prompt input for 'explain' mode */}
-            {activeMode === 'explain' && (
+            {activeTab.activeMode === 'explain' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                 <div style={{ fontSize: '0.88rem', color: 'var(--text-muted)' }}>
-                  Paste any SQL query below and click <strong>Explain Query</strong> to get a breakdown of its logic and clauses.
+                  Paste or write any SQL query in the editor below and click <strong>Explain Query</strong> to get an instant breakdown of its logic, clauses, and analytics context.
                 </div>
                 <button 
                   className="btn-generate"
                   style={{ alignSelf: 'flex-start' }}
                   onClick={handleExplain}
-                  disabled={isGenerating || !sql.trim()}
+                  disabled={isGenerating || !activeTab.sql.trim()}
                 >
-                  <FileQuestion size={16} />
+                  <FileQuestion size={15} />
                   <span>Explain Current SQL</span>
                 </button>
               </div>
             )}
 
             {/* Playground instructions */}
-            {activeMode === 'playground' && (
+            {activeTab.activeMode === 'playground' && (
               <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-                You can write and test any SELECT query directly. QueryCraft automatically ensures strictly read-only execution.
+                Write and test any SQL query in the editor below. QueryCraft automatically checks syntax and ensures strictly read-only execution.
               </div>
             )}
           </div>
@@ -573,19 +808,19 @@ export default function App() {
               color: '#fca5a5',
               fontSize: '0.9rem'
             }}>
-              <ShieldAlert size={18} color="#f43f5e" />
+              <ShieldAlert size={18} color="var(--accent-rose)" />
               <span>{errorMessage}</span>
             </div>
           )}
 
-          {/* Generated SQL Code Panel */}
+          {/* Generated SQL Code Panel with Line Numbers */}
           <div className="glass-panel sql-panel">
             <div className="sql-panel-header">
               <div className="sql-title-group">
-                <span style={{ fontWeight: 600, fontSize: '0.95rem' }}>SQL Query</span>
-                {validation && (
-                  <div className={`safety-badge ${validation.is_safe ? 'safety-safe' : 'safety-unsafe'}`}>
-                    {validation.is_safe ? (
+                <span style={{ fontWeight: 600, fontSize: '0.95rem' }}>SQL Editor</span>
+                {activeTab.validation && (
+                  <div className={`safety-badge ${activeTab.validation.is_safe ? 'safety-safe' : 'safety-unsafe'}`}>
+                    {activeTab.validation.is_safe ? (
                       <>
                         <ShieldCheck size={14} />
                         <span>Read-Only Verified</span>
@@ -598,9 +833,9 @@ export default function App() {
                     )}
                   </div>
                 )}
-                {explanation?.engine && (
+                {activeTab.explanation?.engine && (
                   <span style={{ fontSize: '0.75rem', color: 'var(--text-subtle)' }}>
-                    • {explanation.engine}
+                    • {activeTab.explanation.engine}
                   </span>
                 )}
               </div>
@@ -611,7 +846,7 @@ export default function App() {
                   onClick={handleFormat}
                   title="Format SQL"
                 >
-                  <Code2 size={14} />
+                  <Code2 size={13} />
                   <span>Format</span>
                 </button>
 
@@ -620,58 +855,123 @@ export default function App() {
                   onClick={handleCopySql}
                   title="Copy to Clipboard"
                 >
-                  {copied ? <Check size={14} color="#34d399" /> : <Copy size={14} />}
+                  {copied ? <Check size={13} color="var(--accent-emerald)" /> : <Copy size={13} />}
                   <span>{copied ? 'Copied' : 'Copy'}</span>
                 </button>
 
                 <button 
+                  className="btn-sql-action"
+                  onClick={handleClearSql}
+                  title="Clear Query"
+                >
+                  <Trash2 size={13} />
+                  <span>Clear</span>
+                </button>
+
+                <button 
                   className="btn-sql-action btn-execute"
-                  onClick={() => handleExecute(sql)}
-                  disabled={isExecuting || !sql.trim() || (validation && !validation.is_safe)}
+                  onClick={() => handleExecute(activeTab.sql)}
+                  disabled={isExecuting || !activeTab.sql.trim() || (activeTab.validation && !activeTab.validation.is_safe)}
                   id="execute-query-button"
                 >
-                  {isExecuting ? <RefreshCw size={14} className="animate-spin" /> : <Play size={14} />}
+                  {isExecuting ? <RefreshCw size={13} className="animate-spin" /> : <Play size={13} />}
                   <span>Execute Safely</span>
                 </button>
               </div>
             </div>
 
-            <div className="sql-editor-container">
-              <textarea
-                className="sql-textarea"
-                value={sql}
-                onChange={(e) => {
-                  setSql(e.target.value);
-                  // Real-time quick validation
-                  if (e.target.value.toUpperCase().includes('DROP') || e.target.value.toUpperCase().includes('DELETE')) {
-                    setValidation({ is_safe: false, reason: "Contains destructive keyword." });
-                  } else {
-                    setValidation({ is_safe: true, reason: "Read-only query verified." });
-                  }
-                }}
-                placeholder="-- SQL query will appear here. You can also edit it directly..."
-              />
+            {/* Line-Numbered Editor Container */}
+            <div className="editor-with-gutter">
+              <div className="editor-gutter">
+                {sqlLines.map(line => (
+                  <div key={line}>{line}</div>
+                ))}
+              </div>
+              <div className="editor-content-area">
+                <textarea
+                  className="sql-textarea"
+                  value={activeTab.sql}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    const isDestructive = val.toUpperCase().includes('DROP') || val.toUpperCase().includes('DELETE') || val.toUpperCase().includes('TRUNCATE');
+                    updateActiveTab({
+                      sql: val,
+                      validation: isDestructive 
+                        ? { is_safe: false, reason: "Contains destructive keyword." }
+                        : { is_safe: true, reason: "Read-only query verified." }
+                    });
+                  }}
+                  placeholder="-- SQL query will appear here. You can also edit it directly..."
+                />
+              </div>
             </div>
           </div>
 
+          {/* Real-Time Query Performance & Security Metrics */}
+          {activeTab.queryResults && (
+            <div className="metrics-banner animate-fade-in">
+              <div className="metric-card">
+                <div className="metric-icon-box emerald">
+                  <TableIcon size={20} />
+                </div>
+                <div>
+                  <div className="metric-label">Rows Returned</div>
+                  <div className="metric-val">{activeTab.queryResults.row_count}</div>
+                </div>
+              </div>
+
+              <div className="metric-card">
+                <div className="metric-icon-box cyan">
+                  <Zap size={20} />
+                </div>
+                <div>
+                  <div className="metric-label">Execution Time</div>
+                  <div className="metric-val">
+                    {activeTab.queryResults.execution_time_ms} <span style={{ fontSize: '0.75rem', fontWeight: 500, color: 'var(--accent-emerald)' }}>ms (Fast)</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="metric-card">
+                <div className="metric-icon-box indigo">
+                  <Layers size={20} />
+                </div>
+                <div>
+                  <div className="metric-label">Columns</div>
+                  <div className="metric-val">{activeTab.queryResults.columns?.length || 0}</div>
+                </div>
+              </div>
+
+              <div className="metric-card">
+                <div className="metric-icon-box amber">
+                  <ShieldCheck size={20} />
+                </div>
+                <div>
+                  <div className="metric-label">Guardrail Status</div>
+                  <div className="metric-val" style={{ fontSize: '0.95rem', color: 'var(--accent-emerald)' }}>Read-Only Protected</div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* AI Explanation Breakdown */}
-          {explanation && (
+          {activeTab.explanation && (
             <div className="glass-panel explanation-card animate-fade-in">
               <div className="explanation-header">
                 <Info size={17} color="var(--primary-light)" />
                 <span>AI Query Explanation & Clause Breakdown</span>
               </div>
 
-              {explanation.summary && (
+              {activeTab.explanation.summary && (
                 <div className="explanation-summary">
-                  {explanation.summary}
+                  {activeTab.explanation.summary}
                 </div>
               )}
 
               {/* Clause by Clause Grid */}
-              {explanation.clauses_breakdown && explanation.clauses_breakdown.length > 0 && (
+              {activeTab.explanation.clauses_breakdown && activeTab.explanation.clauses_breakdown.length > 0 && (
                 <div className="clauses-grid">
-                  {explanation.clauses_breakdown.map((item, idx) => (
+                  {activeTab.explanation.clauses_breakdown.map((item, idx) => (
                     <div key={idx} className="clause-card">
                       <span className="clause-badge">{item.clause}</span>
                       <p className="clause-desc">{item.explanation}</p>
@@ -681,23 +981,24 @@ export default function App() {
               )}
 
               {/* Business Value Insight */}
-              {explanation.business_value && (
-                <div style={{ fontSize: '0.82rem', color: '#94a3b8', fontStyle: 'italic', borderTop: '1px solid var(--border-subtle)', paddingTop: '0.6rem' }}>
-                  <strong>Business Analytics Insight:</strong> {explanation.business_value}
+              {activeTab.explanation.business_value && (
+                <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontStyle: 'italic', borderTop: '1px solid var(--border-subtle)', paddingTop: '0.75rem' }}>
+                  <strong style={{ color: 'var(--primary-light)' }}>Business Analytics Insight: </strong> 
+                  {activeTab.explanation.business_value}
                 </div>
               )}
 
               {/* Suggested Follow-up Questions */}
-              {explanation.suggested_questions && explanation.suggested_questions.length > 0 && (
+              {activeTab.explanation.suggested_questions && activeTab.explanation.suggested_questions.length > 0 && (
                 <div className="followup-box">
                   <span className="followup-title">Recommended Follow-up Inquiries</span>
                   <div className="followup-pills">
-                    {explanation.suggested_questions.map((q, idx) => (
+                    {activeTab.explanation.suggested_questions.map((q, idx) => (
                       <button
                         key={idx}
                         className="followup-pill"
                         onClick={() => {
-                          setPrompt(q);
+                          updateActiveTab({ prompt: q });
                           handleGenerate(q);
                         }}
                       >
@@ -711,42 +1012,40 @@ export default function App() {
           )}
 
           {/* Query Results Table / Chart */}
-          {queryResults && (
+          {activeTab.queryResults && (
             <div className="glass-panel results-card animate-fade-in" id="query-results-panel">
               <div className="results-header">
-                <div className="results-metrics">
-                  <span>
-                    Rows: <span className="metric-highlight">{queryResults.row_count}</span>
-                  </span>
-                  <span>
-                    Time: <span className="metric-highlight">{queryResults.execution_time_ms} ms</span>
-                  </span>
-                  <span style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', color: '#34d399', fontSize: '0.8rem' }}>
-                    <CheckCircle2 size={13} />
-                    Read-Only Protected
-                  </span>
-                </div>
+                <div className="results-tools">
+                  {/* Results Search Filter */}
+                  <input 
+                    type="text"
+                    className="results-filter-input"
+                    placeholder="Filter rows..."
+                    value={activeTab.resultsFilter}
+                    onChange={(e) => updateActiveTab({ resultsFilter: e.target.value })}
+                  />
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                   {chartData && (
                     <div className="view-switcher">
                       <button 
-                        className={`view-btn ${activeView === 'table' ? 'active' : ''}`}
-                        onClick={() => setActiveView('table')}
+                        className={`view-btn ${activeTab.activeView === 'table' ? 'active' : ''}`}
+                        onClick={() => updateActiveTab({ activeView: 'table' })}
                       >
                         <TableIcon size={12} style={{ display: 'inline', marginRight: '3px' }} />
                         Table
                       </button>
                       <button 
-                        className={`view-btn ${activeView === 'chart' ? 'active' : ''}`}
-                        onClick={() => setActiveView('chart')}
+                        className={`view-btn ${activeTab.activeView === 'chart' ? 'active' : ''}`}
+                        onClick={() => updateActiveTab({ activeView: 'chart' })}
                       >
                         <BarChart3 size={12} style={{ display: 'inline', marginRight: '3px' }} />
                         Visual
                       </button>
                     </div>
                   )}
+                </div>
 
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                   <button 
                     className="btn-sql-action"
                     onClick={handleExportCsv}
@@ -768,50 +1067,74 @@ export default function App() {
               </div>
 
               {/* View 1: Tabular Grid */}
-              {activeView === 'table' && (
+              {activeTab.activeView === 'table' && (
                 <div className="table-responsive-wrapper">
                   <table className="query-table">
                     <thead>
                       <tr>
-                        {queryResults.columns.map((col, idx) => (
-                          <th key={idx}>{col}</th>
+                        {processedTableData.columns.map((col, idx) => (
+                          <th 
+                            key={idx} 
+                            className="sortable"
+                            onClick={() => handleSortClick(col)}
+                            title="Click to sort"
+                          >
+                            <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                              <span>{col}</span>
+                              <ArrowUpDown size={11} color={activeTab.sortColumn === col ? 'var(--primary)' : 'var(--text-subtle)'} />
+                            </span>
+                          </th>
                         ))}
                       </tr>
                     </thead>
                     <tbody>
-                      {queryResults.rows.map((row, rIdx) => (
-                        <tr key={rIdx}>
-                          {row.map((cell, cIdx) => (
-                            <td key={cIdx}>
-                              {cell === null ? (
-                                <span style={{ color: 'var(--text-subtle)', fontStyle: 'italic' }}>NULL</span>
-                              ) : typeof cell === 'number' && !Number.isInteger(cell) ? (
-                                Number(cell).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-                              ) : (
-                                String(cell)
-                              )}
-                            </td>
-                          ))}
+                      {processedTableData.rows.length > 0 ? (
+                        processedTableData.rows.map((row, rIdx) => (
+                          <tr key={rIdx}>
+                            {row.map((cell, cIdx) => (
+                              <td key={cIdx}>
+                                {cell === null ? (
+                                  <span style={{ color: 'var(--text-subtle)', fontStyle: 'italic', fontSize: '0.78rem' }}>NULL</span>
+                                ) : typeof cell === 'number' && !Number.isInteger(cell) ? (
+                                  Number(cell).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                                ) : (
+                                  String(cell)
+                                )}
+                              </td>
+                            ))}
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan={processedTableData.columns.length} style={{ textAlign: 'center', color: 'var(--text-subtle)', padding: '2rem' }}>
+                            No rows matching the filter.
+                          </td>
                         </tr>
-                      ))}
+                      )}
                     </tbody>
                   </table>
                 </div>
               )}
 
               {/* View 2: Visual Bar Chart View for Aggregations */}
-              {activeView === 'chart' && chartData && (
+              {activeTab.activeView === 'chart' && chartData && (
                 <div className="chart-container">
-                  <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-                    Visual distribution of <strong>{chartData.valueCol}</strong> grouped by <strong>{chartData.labelCol}</strong>:
+                  <div className="chart-controls-bar">
+                    <div style={{ fontSize: '0.86rem', color: 'var(--text-muted)' }}>
+                      Distribution of <strong style={{ color: 'var(--accent-cyan)' }}>{chartData.valueCol}</strong> by <strong style={{ color: 'var(--primary-light)' }}>{chartData.labelCol}</strong>
+                    </div>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-subtle)' }}>
+                      Total: <strong style={{ color: 'var(--text-main)', fontFamily: 'var(--font-mono)' }}>{chartData.totalSum.toLocaleString(undefined, { maximumFractionDigits: 2 })}</strong>
+                    </div>
                   </div>
+
                   {chartData.items.map((item, idx) => {
                     const pct = Math.round((item.value / chartData.max) * 100);
                     return (
                       <div key={idx} className="chart-bar-row">
                         <div className="chart-bar-label">
                           <span>{item.label} {item.subLabel ? `(${item.subLabel})` : ''}</span>
-                          <span style={{ fontWeight: 600, color: '#38bdf8' }}>
+                          <span style={{ fontWeight: 600, color: 'var(--accent-cyan)', fontFamily: 'var(--font-mono)' }}>
                             {typeof item.value === 'number' && !Number.isInteger(item.value) ? item.value.toFixed(2) : item.value}
                           </span>
                         </div>
@@ -831,7 +1154,7 @@ export default function App() {
       {/* Sample Data Table Modal */}
       {selectedTableForPreview && (
         <div className="modal-backdrop" onClick={() => setSelectedTableForPreview(null)}>
-          <div className="modal-dialog" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '750px' }}>
+          <div className="modal-dialog" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '800px' }}>
             <div className="modal-header">
               <h3 className="modal-title">
                 Sample Data: <span style={{ color: 'var(--primary-light)' }}>{selectedTableForPreview.name}</span>
@@ -843,7 +1166,7 @@ export default function App() {
                 ✕
               </button>
             </div>
-            <div className="modal-body" style={{ padding: '1rem', overflowX: 'auto' }}>
+            <div className="modal-body" style={{ padding: '1rem', overflowX: 'auto', maxHeight: '450px' }}>
               <table className="query-table" style={{ fontSize: '0.8rem' }}>
                 <thead>
                   <tr>
@@ -868,7 +1191,7 @@ export default function App() {
                 className="btn-generate"
                 onClick={() => {
                   const q = `SELECT * FROM ${selectedTableForPreview.name} LIMIT 20;`;
-                  setSql(q);
+                  updateActiveTab({ sql: q, prompt: `Select all from ${selectedTableForPreview.name}` });
                   handleExecute(q);
                   setSelectedTableForPreview(null);
                 }}
@@ -926,14 +1249,15 @@ export default function App() {
               </div>
 
               <div style={{ 
-                background: 'rgba(99, 102, 241, 0.08)', 
-                border: '1px solid rgba(99, 102, 241, 0.2)', 
+                background: 'var(--primary-glow)', 
+                border: '1px solid var(--border-active)', 
                 borderRadius: 'var(--radius-sm)', 
                 padding: '0.75rem',
                 fontSize: '0.8rem',
-                color: '#cbd5e1'
+                color: 'var(--text-muted)'
               }}>
-                <strong>Safety Guardrails:</strong> QueryCraft runs strict read-only queries with multi-statement attack prevention, token inspection, and read-only database connections.
+                <strong style={{ color: 'var(--text-main)' }}>Safety Guardrails: </strong> 
+                QueryCraft runs strict read-only queries with multi-statement attack prevention, token inspection, and read-only database connections.
               </div>
             </div>
             <div className="modal-footer">
