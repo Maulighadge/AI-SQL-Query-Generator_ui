@@ -8,15 +8,15 @@
   --font-mono: 'JetBrains Mono', 'Fira Code', Menlo, Monaco, Consolas, monospace;
 
   /* Color Palette - Dark Void & Obsidian */
-  --bg-main: #070a12;
-  --bg-secondary: #0d1322;
+  --bg-main: #060913;
+  --bg-secondary: #0c1222;
   --bg-card: rgba(15, 23, 42, 0.72);
   --bg-card-hover: rgba(30, 41, 59, 0.82);
   --bg-card-glass: rgba(15, 23, 42, 0.6);
   --bg-input: rgba(11, 17, 32, 0.85);
-  --bg-subtle: rgba(255, 255, 255, 0.03);
-  --bg-editor: #090e1a;
-  --bg-gutter: #060913;
+  --bg-subtle: rgba(255, 255, 255, 0.035);
+  --bg-editor: #080d1a;
+  --bg-gutter: #050811;
 
   /* Borders & Dividers */
   --border-subtle: rgba(255, 255, 255, 0.08);
@@ -69,11 +69,11 @@
   /* Color Palette - Clean Titanium Pearl & Slate */
   --bg-main: #f4f6fb;
   --bg-secondary: #eef2f9;
-  --bg-card: rgba(255, 255, 255, 0.88);
+  --bg-card: rgba(255, 255, 255, 0.9);
   --bg-card-hover: rgba(255, 255, 255, 0.98);
-  --bg-card-glass: rgba(255, 255, 255, 0.75);
+  --bg-card-glass: rgba(255, 255, 255, 0.78);
   --bg-input: #ffffff;
-  --bg-subtle: rgba(0, 0, 0, 0.03);
+  --bg-subtle: rgba(0, 0, 0, 0.035);
   --bg-editor: #f8fafc;
   --bg-gutter: #f1f5f9;
 
@@ -187,7 +187,7 @@ button:disabled {
 }
 
 /* Syntax & Code formatting */
-code, pre {
+code, pre, .font-mono {
   font-family: var(--font-mono);
 }
 
@@ -213,6 +213,27 @@ code, pre {
   }
 }
 
+/* KBD Keyboard Badge */
+.kbd-badge {
+  display: inline-block;
+  padding: 0.15rem 0.45rem;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-subtle);
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.2);
+}
+
+/* Color Helper Classes */
+.text-emerald { color: var(--accent-emerald); }
+.text-rose { color: var(--accent-rose); }
+.text-cyan { color: var(--accent-cyan); }
+.text-amber { color: var(--accent-amber); }
+.text-primary { color: var(--primary); }
+
 /* Animations */
 @keyframes fadeIn {
   from {
@@ -228,11 +249,22 @@ code, pre {
 @keyframes scaleUp {
   from {
     opacity: 0;
-    transform: scale(0.97);
+    transform: scale(0.96);
   }
   to {
     opacity: 1;
     transform: scale(1);
+  }
+}
+
+@keyframes slideInRight {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
   }
 }
 
@@ -241,5 +273,14 @@ code, pre {
 }
 
 .animate-scale-up {
-  animation: scaleUp 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation: scaleUp 0.18s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
